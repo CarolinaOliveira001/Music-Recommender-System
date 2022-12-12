@@ -1,0 +1,383 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2638
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fnil\fcharset0 Menlo-Bold;\f1\fnil\fcharset0 Menlo-Regular;}
+{\colortbl;\red255\green255\blue255;\red25\green25\blue25;\red0\green0\blue0;\red0\green0\blue0;
+\red0\green0\blue0;\red0\green0\blue0;}
+{\*\expandedcolortbl;;\cssrgb\c12941\c12941\c12941;\csgray\c0;\csgenericrgb\c0\c0\c0;
+\cssrgb\c0\c0\c0;\csgray\c0\c0;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww28600\viewh16380\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\b\fs36 \cf0 # Exercise 3
+\f1\b0\fs28 \
+\
+
+\f0\b // Here are the libraries used in this exercise.
+\f1\b0 \
+import org.apache.log4j.\{Logger, Level\}\
+import org.apache.spark.rdd._\
+import org.apache.spark.mllib.recommendation._\cf2 \expnd0\expndtw0\kerning0
+\
+\pard\pardeftab720\partightenfactor0
+\cf2 import org.apache.spark.sql.\{Dataset, Row, SQLContext\}\
+import org.apache.spark.sql.functions._\
+import org.apache.spark.sql.types._\
+import scala.util.Random\
+import org.apache.spark.ml.stat.Correlation\
+import org.apache.spark.ml.feature.VectorAssembler\
+import org.apache.spark.ml.linalg.\{Matrix, Vectors\}\
+import org.apache.spark.SparkContext\
+\pard\pardeftab720\partightenfactor0
+\cf0 import org.apache.spark.sql.functions.countDistinct\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \kerning1\expnd0\expndtw0 import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics\
+import org.apache.spark.mllib.util.MLUtils\
+\
+
+\f0\b // Reduce some of the debugging output of Spark.
+\f1\b0 \
+Logger.getLogger("org").setLevel(Level.ERROR)\
+Logger.getLogger("akka").setLevel(Level.ERROR)\
+\
+
+\f0\b // (a)\
+// First we have 3 data sets.\
+
+\f1\b0 val rawArtistAlias = sc.textFile("/Users/carolina/Documents/Semester_8/Big_Data_Analytics/Exercise_2/audioscrobbler/artist_alias.txt")\
+val rawArtistData = sc.textFile("/Users/carolina/Documents/Semester_8/Big_Data_Analytics/Exercise_2/audioscrobbler/artist_data.txt")\
+val rawUserArtistData = sc.textFile("/Users/carolina/Documents/Semester_8/Big_Data_Analytics/Exercise_2/audioscrobbler/user_artist_data.txt")\
+\
+
+\f0\b // This is the cleaning the data given my the teacher. Nothing was changed, so when reading the code, you can skip to the next explanation.
+\f1\b0 \
+rawUserArtistData.map(_.split(' ')(0).toDouble).stats()\
+rawUserArtistData.map(_.split(' ')(1).toDouble).stats()\
+val artistByID = rawArtistData.flatMap \{ \
+  line => val (id, name) = line.span(_ != '\\t')\
+  if (name.isEmpty) \{ \
+    None \
+  \} else \{ \
+    try \{ \
+      Some((id.toInt, name.trim)) \} \
+    catch \{ case e: NumberFormatException => None \} \
+  \} \
+\} \
+val artistAlias = rawArtistAlias.flatMap \{ line => \
+  val tokens = line.split('\\t') \
+  if (tokens(0).isEmpty) \{ \
+    None \
+  \} else \{\
+    Some((tokens(0).toInt, tokens(1).toInt)) \
+  \} \
+\}.collectAsMap()\
+val bArtistAlias = sc.broadcast(artistAlias)\
+val trainData = rawUserArtistData.map \{ \
+  line => val Array(userID, artistID, count) = \
+    line.split(' ').map(_.toInt) \
+    val finalArtistID = bArtistAlias.value.getOrElse(artistID, artistID) \
+    Rating(userID, finalArtistID, count) \
+\}.cache()\
+\
+
+\f0\b // We take the trainData and map the elements of the RDD to a different structure. The new structure will be (key, value) where key is the userID and value is (finalArtistID, count). 
+\f1\b0 \
+val train_new = trainData.map\{case Rating(userID, finalArtistID, count) => (userID, (finalArtistID, count))\}\
+\
+\pard\tx565\tx1132\tx1700\tx2267\tx2834\tx3401\tx3968\tx4534\tx5101\tx5668\tx6236\tx6803\pardeftab720\pardirnatural\partightenfactor0
+
+\f0\b \cf0 \expnd0\expndtw0\kerning0
+// First we try to find the distinct combinations of (userID, finalArtistID). After that, as required in the exercise, we use a map function to map finalArtistID to count. We need this as a preparation of the data for the new dataset TrainData100 with users who listen to 100 distinct artists. To achieve this we map and reduce accordingly using a case function which, referring to the userID and count by line1, line2 accordingly.
+\f1\b0 \kerning1\expnd0\expndtw0 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+\cf3 \CocoaLigature0 val help_sel_dis = trainData.map\{case Rating(userID, finalArtistID, count) => (userID, finalArtistID)\}.distinct().map\{case (userID, finalArtistID) => userID\}.map\{userId => (userId, 1)\}.reduceByKey(_+_).filter(line => line._2 >=100).map\{line => (line._1, line._2)\}\
+\
+\pard\tx560\tx1120\tx1679\tx2240\tx2800\tx3360\tx3919\tx4479\tx5040\tx5600\tx6160\tx6719\pardeftab720\pardirnatural\partightenfactor0
+
+\f0\b \cf4 \expnd0\expndtw0\kerning0
+\CocoaLigature1 // Now we have to create trainData100 mapping according to the userID and Rating of the UserId and count and we group by key.
+\f1\b0 \cf3 \kerning1\expnd0\expndtw0 \CocoaLigature0 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+\cf5 \cb6 val trainData100 = train_new.join(help_sel_dis).map\{line => (line._1, Rating(line._1, line._2._1._1, line._2._1._2))\}.groupByKey()\
+\
+\pard\tx560\tx1120\tx1679\tx2240\tx2800\tx3360\tx3919\tx4479\tx5040\tx5600\tx6160\tx6719\pardeftab720\pardirnatural\partightenfactor0
+
+\f0\b \cf4 \cb1 \expnd0\expndtw0\kerning0
+\CocoaLigature1 // Here we split the data to 90% training set and 10% testing set into two separate trainData90 and testData10 RDDs.
+\f1\b0 \cf5 \cb6 \kerning1\expnd0\expndtw0 \CocoaLigature0 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+\cf5 val splitData = trainData100\expnd0\expndtw0\kerning0
+\CocoaLigature1 .map(x => x._2.splitAt((x._2.size*0.9).toInt))\
+\
+\pard\tx560\tx1120\tx1679\tx2240\tx2800\tx3360\tx3919\tx4479\tx5040\tx5600\tx6160\tx6719\pardeftab720\pardirnatural\partightenfactor0
+
+\f0\b \cf4 \cb1 // The training and testing dataset, after the split, are saved as lists.\
+Therefore we have 2 lists within the RDD. This prevents us from applying functions on the training and testing dataset and treating them as RDD as we should for this exercise so we use flatMap in order to remove the lists and be left only with the RDD.
+\f1\b0 \cf5 \cb6 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+\cf5 val trainData90 = splitData.map\{x => x._1\}.flatMap\{list => list\}\
+val testData10 = splitData.map\{x => x._2\}.flatMap\{list => list\}\kerning1\expnd0\expndtw0 \CocoaLigature0 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf5 \CocoaLigature1 val model = ALS.trainImplicit(trainData90, 10, 5, 0.01, 1.0) \CocoaLigature0 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+\cf5 \
+\pard\tx560\tx1120\tx1679\tx2240\tx2800\tx3360\tx3919\tx4479\tx5040\tx5600\tx6160\tx6719\pardeftab720\pardirnatural\partightenfactor0
+
+\f0\b \cf4 \cb1 \expnd0\expndtw0\kerning0
+\CocoaLigature1 //We create the variable someUsers which takes 100 distinct random users from testData dataset.
+\f1\b0 \cf5 \cb6 \kerning1\expnd0\expndtw0 \CocoaLigature0 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf5 \CocoaLigature1 val someUsers = testData10.map(x => x.user)\expnd0\expndtw0\kerning0
+.distinct().takeSample(false, 100, System.nanoTime.toInt)\cf0 \cb1 \kerning1\expnd0\expndtw0 \
+\cf5 \cb6 \CocoaLigature0 \
+\pard\tx565\tx1132\tx1700\tx2267\tx2834\tx3401\tx3968\tx4534\tx5101\tx5668\tx6236\tx6803\pardeftab720\pardirnatural\partightenfactor0
+
+\f0\b \cf0 \cb1 \expnd0\expndtw0\kerning0
+\CocoaLigature1 // This function returns a set with the artist that the given user listens to.
+\f1\b0 \cf5 \cb6 \kerning1\expnd0\expndtw0 \CocoaLigature0 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \cb1 \CocoaLigature1 def actualArtistsForUser(someUser: Int): Set[Int] = \{\
+  val rawArtistsForUser = rawUserArtistData.map(_.split(' ')).\
+    filter \{ case Array(user,_,_) => user.toInt == someUser \}\
+  rawArtistsForUser.map(x => x(1).toInt).collect().toSet\
+\}\
+\
+\pard\tx565\tx1132\tx1700\tx2267\tx2834\tx3401\tx3968\tx4534\tx5101\tx5668\tx6236\tx6803\pardeftab720\pardirnatural\partightenfactor0
+
+\f0\b \cf0 \expnd0\expndtw0\kerning0
+// We use this function in order to predict the most popular users.
+\f1\b0 \kerning1\expnd0\expndtw0 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 def predictMostPopular(user: Int, numArtists: Int) = \{ \
+  val topArtists = artistsTotalCount.take(numArtists)\
+  topArtists.map\{case (artist, rating) => Rating(user, artist, rating)\}\
+\}\
+\
+\pard\tx565\tx1132\tx1700\tx2267\tx2834\tx3401\tx3968\tx4534\tx5101\tx5668\tx6236\tx6803\pardeftab720\pardirnatural\partightenfactor0
+
+\f0\b \cf0 \expnd0\expndtw0\kerning0
+// Defining and initializing the area under curve variable.
+\f1\b0 \kerning1\expnd0\expndtw0 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 var AUC1 = 0.0\
+var AUC2 = 0.0\cf5 \cb6 \CocoaLigature0 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+\cf5 \
+\pard\tx565\tx1132\tx1700\tx2267\tx2834\tx3401\tx3968\tx4534\tx5101\tx5668\tx6236\tx6803\pardeftab720\pardirnatural\partightenfactor0
+
+\f0\b \cf0 \cb1 \expnd0\expndtw0\kerning0
+\CocoaLigature1 // We create a variable called recommendations to compute the top 25 most recommended artists for each of 100 random users we took above. For each of the 100 lists of recommendations, we create a new RDD, called predictionAndLabels consisting of pairs (y^\{^\}, y), where y^\{^\} is the recommendation value of the respective artist for the current user, and y is a binary value indicating whether the current user has indeed listened to that artist (y=1) or not (y=0) based on the provided actualArtistsForUser Scala function. To do so we created and if condition that checks if the artist is in the the actualArtists and if yes it takes the binary value 1 and if not it takes 0.
+\f1\b0 \cf5 \cb6 \kerning1\expnd0\expndtw0 \CocoaLigature0 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \cb1 \CocoaLigature1 for (someUser <- someUsers) \{\
+  \
+  val actualArtists = actualArtistsForUser(someUser)\
+\
+  val recommendations1 = model.recommendProducts(someUser, 25)\
+\pard\tx565\tx1132\tx1700\tx2267\tx2834\tx3401\tx3968\tx4534\tx5101\tx5668\tx6236\tx6803\pardeftab720\pardirnatural\partightenfactor0
+\cf0 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0   val predictionsAndLabels1 = recommendations1.map \{ \
+    case Rating(user, artist, rating) =>\
+      if (actualArtists.contains(artist)) \{\
+        (rating, 1.0)\
+      \} else \{\
+        (rating, 0.0)\
+      \}\
+  \}\
+\
+\pard\tx565\tx1132\tx1700\tx2267\tx2834\tx3401\tx3968\tx4534\tx5101\tx5668\tx6236\tx6803\pardeftab720\pardirnatural\partightenfactor0
+
+\f0\b \cf0 \expnd0\expndtw0\kerning0
+// We use as input the RDD we just created with the binary values to he BinaryClassificationMetrics API of Spark which then computes the AUC value for each user automatically. 
+\f1\b0 \kerning1\expnd0\expndtw0 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0   val metrics1 = new BinaryClassificationMetrics(sc.parallelize(predictionsAndLabels1))\
+  AUC1 += metrics1.areaUnderROC\
+\
+\pard\tx565\tx1132\tx1700\tx2267\tx2834\tx3401\tx3968\tx4534\tx5101\tx5668\tx6236\tx6803\pardeftab720\pardirnatural\partightenfactor0
+
+\f0\b \cf0 \expnd0\expndtw0\kerning0
+// Now we use predictMostPopular baseline recommendation function provided in the script in order to compute its AUC which later we will need to compare with the average one.
+\f1\b0 \kerning1\expnd0\expndtw0 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0   val recommendations2 = predictMostPopular(someUser, 25)\
+  val predictionsAndLabels2 = recommendations2.map \{ \
+    case Rating(user, artist, rating) =>\
+      if (actualArtists.contains(artist)) \{\
+        (rating, 1.0)\
+      \} else \{\
+        (rating, 0.0)\
+      \}\
+  \}\
+\
+  val metrics2 = new BinaryClassificationMetrics(sc.parallelize(predictionsAndLabels2))\
+  AUC2 += metrics2.areaUnderROC\
+\}\cf5 \cb6 \CocoaLigature0 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+\cf5 \
+\pard\tx560\tx1120\tx1679\tx2240\tx2800\tx3360\tx3919\tx4479\tx5040\tx5600\tx6160\tx6719\pardeftab720\pardirnatural\partightenfactor0
+
+\f0\b \cf4 \cb1 \expnd0\expndtw0\kerning0
+\CocoaLigature1 // Here we calculate the average AUC for 100 previously selected users for both predictandLabels and predict mostPopular and we print it. We see that the avg value for predictandLabels is around 10 times higher.\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f1\b0 \cf0 \kerning1\expnd0\expndtw0 println("ALS-Recommender AUC: " + (AUC1/100.0)) // The output is : \cf3 \CocoaLigature0 0.5760869565217392\cf0 \CocoaLigature1 \
+println("Most-Popular AUC:    " + (AUC2/100.0)) // The output is : \cf3 \CocoaLigature0 0.06583333333333334\cf5 \cb6 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+\cf3 \cb1 \
+
+\f0\b // (b)\
+\
+// For this question we have nested for loops. The first goes through each parameter setting, the second goes through each fold of cross validation, and we base the model on each iteration of hyper parameter tunning and cross validation fold. Then for each iteration we should find the AUC to finally compare all AUCs and select the best parameters.
+\f1\b0 \
+\
+val numOfFolds = 5\
+val numOfIteration = 10\
+
+\f0\b // fold the trainData90 5 times
+\f1\b0 \
+val kFoldTrainData = MLUtils.kFold(trainData90,numOfFolds,0)\
+\
+val evaluations = for (rank <- Array(10, 100);\
+lambda <- Array(1.0, 0.0001); \
+alpha <- Array(1.0, 40.0))\
+yield \{\
+	var AUC = 0.0\
+       
+\f0\b // go through each fold of the cross validation 
+\f1\b0 \
+	val evaluationFold = for(fold <- kFoldTrainData)\
+	yield \{\
+		val traindata = fold._1\
+		val testdata = fold._2\
+       
+\f0\b // manual parameter tunning
+\f1\b0 \
+		val model_k = ALS.trainImplicit(traindata, rank, numOfIteration, lambda, alpha)\
+	\
+		val users_traindata = traindata.map\{case Rating(userID, finalArtistID, count) => userID\}.distinct().map\{userID => (userID, 1)\}\
+		val users_testdata = testdata.map\{case Rating(userID, finalArtistID, count) => userID\}.distinct().map\{userID => (userID, 1)\}\
+             
+\f0\b // find the inner join to see the intersection  between traindata and testdata in order not to face the error of \'93userid not found in the model\'94
+\f1\b0 \
+		val commonUsers = users_traindata.join(users_testdata).map\{line => line._1\}\
+		val areaROC_elements = commonUsers.map(userID => \{ ///base the recommendation on the model and then find the predictionsandlabels to use in auc calculation\
+			val recommendations = model_k.recommendProducts(userID, 25)\
+			val actualArtists = actualArtistsForUser(userID)\
+			val predictionsAndLabels = recommendations.map \{ \
+\uc0\u8198  \u8198  \u8198  \u8198  			case Rating(user, artist, rating) =>\
+\uc0\u8198  \u8198  \u8198  \u8198  \u8198  \u8198  			if (actualArtists.contains(artist)) \{\
+\uc0\u8198  \u8198  \u8198  \u8198  \u8198  \u8198  \u8198  \u8198  			(rating, 1.0)\
+\uc0\u8198  \u8198  \u8198  \u8198  \u8198  \u8198  			\} else \{\
+\uc0\u8198  \u8198  \u8198  \u8198  \u8198  \u8198  \u8198  \u8198  			(rating, 0.0)\
+\uc0\u8198  \u8198  \u8198  \u8198  \u8198  \u8198  			\}\
+\uc0\u8198  \u8198  		\}\
+		
+\f0\b // area under ROC for each iteration
+\f1\b0 	\
+		val metrics = new BinaryClassificationMetrics(sc.parallelize(predictionsAndLabels))\
+		AUC += metrics.areaUnderROC\
+		println("AUC: " + AUC)\
+		(AUC)\
+		\})\
+\
+		(AUC)\
+	\}\
+	println("Parameters: " + rank + ", " + lambda + ", " + alpha + "-> " + AUC)\
+	((rank, lambda, alpha), AUC)\
+\}\
+\
+\pard\tx560\tx1120\tx1679\tx2240\tx2800\tx3360\tx3919\tx4479\tx5040\tx5600\tx6160\tx6719\pardeftab720\pardirnatural\partightenfactor0
+
+\f0\b \cf4 \expnd0\expndtw0\kerning0
+\CocoaLigature1 // (c) \
+\
+// For part c, we are asked to add a new User. In order to find a new User ID that was not used before, we followed this idea: We ordered by UserID and ArtistID and then we chose an ID that is bigger than the biggest one( The first one in the ordered structure). Therefore in this way we know that it is not a repeated ID. Then, we add 10 new ratings of existing artist ids our choice to the original trainData RDD as follows:
+\f1\b0 \cf3 \kerning1\expnd0\expndtw0 \CocoaLigature0 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+val userOrder = trainData.map\{case Rating(userID, finalArtistID, count) => (userID, 1)\}.distinct().sortByKey(false)\
+val artistOrder = trainData.map\{case Rating(userID, finalArtistID, count) => (finalArtistID, 1)\}.distinct().map\{case (finalArtistID, count) => finalArtistID\}\
+val userID_new = 2443517\
+val artist_new = Seq(\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 1006705\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 1150265\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 2280819\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 2062083\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 6836970\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 1302571\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 10294719\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 6614690\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 10211603\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 6702345\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 )\
+val count_new = Seq(\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 3\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 23\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 9\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 1\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 34\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 5\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 1\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 1\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 1\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 , \cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 10\cf0 \CocoaLigature1 "\cf3 \CocoaLigature0 )\
+\
+val inventedData = Seq((userID_new\cf0 \CocoaLigature1 , \cf3 \CocoaLigature0 1006705, 3\cf0 \CocoaLigature1 ),\
+\cf3 \CocoaLigature0 (userID_new\cf0 \CocoaLigature1 , \cf3 \CocoaLigature0 1150265, 23\cf0 \CocoaLigature1 ),\
+\cf3 \CocoaLigature0 (userID_new\cf0 \CocoaLigature1 , \cf3 \CocoaLigature0 2280819, 9\cf0 \CocoaLigature1 ),\
+\cf3 \CocoaLigature0 (userID_new\cf0 \CocoaLigature1 , \cf3 \CocoaLigature0 2062083, 1\cf0 \CocoaLigature1 ),\
+\cf3 \CocoaLigature0 (userID_new\cf0 \CocoaLigature1 , \cf3 \CocoaLigature0 6836970, 34\cf0 \CocoaLigature1 ),\
+\cf3 \CocoaLigature0 (userID_new\cf0 \CocoaLigature1 , \cf3 \CocoaLigature0 1302571, 5\cf0 \CocoaLigature1 ),\
+\cf3 \CocoaLigature0 (userID_new\cf0 \CocoaLigature1 , \cf3 \CocoaLigature0 10294719, 1\cf0 \CocoaLigature1 ),\
+\cf3 \CocoaLigature0 (userID_new\cf0 \CocoaLigature1 , \cf3 \CocoaLigature0 6614690, 1\cf0 \CocoaLigature1 ),\
+\cf3 \CocoaLigature0 (userID_new\cf0 \CocoaLigature1 , \cf3 \CocoaLigature0 10211603, 1\cf0 \CocoaLigature1 ),\
+\cf3 \CocoaLigature0 (userID_new\cf0 \CocoaLigature1 , \cf3 \CocoaLigature0 6702345, 10\cf0 \CocoaLigature1 )) \cf3 \CocoaLigature0 \
+\
+val rdd=spark.sparkContext.parallelize(inventedData).map\{case (userID, finalArtistID, count) => Rating(userID, finalArtistID, count)\}\
+\
+val merge_trainData = trainData.union(rdd)\
+\
+
+\f0\b // We train the model with the new RDD and we take the top 25 recomended nee artists for this user. In order to check manually if the recommandation is accurate, we check if this artist is already on the list of actual Artists, if so we put 1.0 the raiting and 0.0 otherwise. These values we put it into a RDD by using parallelize and then we sum the values of 1 together. While we print we check how many of our predictions were correct.
+\f1\b0 \
+\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \CocoaLigature1 val model_new = ALS.trainImplicit(merge_trainData, 10, 5, 0.01, 1.0)\cf3 \CocoaLigature0 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+\
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \CocoaLigature1 val recommendations = model_new.recommendProducts(\cf3 \CocoaLigature0 userID_new\cf0 \CocoaLigature1 , 25)\
+\
+val actualArtists = actualArtistsForUser(\cf3 \CocoaLigature0 userID_new\cf0 \CocoaLigature1 )\
+\
+val predictionsAndLabels3 = recommendations.map \{ \
+   case Rating(user, artist, rating) =>\
+     if (actualArtists.contains(artist)) \{\
+       (rating, 1.0)\
+     \} else \{\
+       (rating, 0.0)\
+     \}\
+\}\
+\
+val predictionRDD = sc.parallelize(predictionsAndLabels3)\
+\
+val help_prediction = predictionRDD.map\{case (rating, bool) => (12, bool)\}\cf3 \CocoaLigature0 .reduceByKey(_+_).map\{line => line._2\}\
+\
+help_prediction.foreach(println)\cf0 \CocoaLigature1 \
+\
+\
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+\cf0 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \
+\
+\
+\
+\
+\
+\
+\
+\
+\pard\pardeftab720\partightenfactor0
+\cf0 \
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+\cf0 \
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+}
